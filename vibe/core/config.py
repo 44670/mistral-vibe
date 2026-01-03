@@ -264,7 +264,7 @@ class VibeConfig(BaseSettings):
     vim_keybindings: bool = False
     disable_welcome_banner_animation: bool = False
     displayed_workdir: str = ""
-    auto_compact_threshold: int = 200_000
+    auto_compact_threshold: int = 100_000
     context_warnings: bool = False
     instructions: str = ""
     workdir: Path | None = Field(default=None, exclude=True)
