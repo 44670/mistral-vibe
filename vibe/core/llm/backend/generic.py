@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Callable
+from datetime import datetime
+from pathlib import Path
 import json
 import os
 import types
@@ -9,6 +11,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, Protocol, TypeVar
 import httpx
 
 from vibe.core.llm.exceptions import BackendErrorBuilder
+from vibe.core.paths.global_paths import LOG_DIR
 from vibe.core.types import (
     AvailableTool,
     LLMChunk,
@@ -17,7 +20,7 @@ from vibe.core.types import (
     Role,
     StrToolChoice,
 )
-from vibe.core.utils import async_generator_retry, async_retry
+from vibe.core.utils import async_generator_retry, async_retry, logger
 
 if TYPE_CHECKING:
     from vibe.core.config import ModelConfig, ProviderConfig
@@ -36,6 +39,7 @@ class APIAdapter(Protocol):
         self,
         *,
         model_name: str,
+        openrouter_pin_provider: str | None,
         messages: list[LLMMessage],
         temperature: float,
         tools: list[AvailableTool] | None,
@@ -54,6 +58,38 @@ class APIAdapter(Protocol):
 BACKEND_ADAPTERS: dict[str, APIAdapter] = {}
 
 T = TypeVar("T", bound=APIAdapter)
+
+_LLM_LOG_FILE: Path | None = None
+
+
+def _ensure_llm_log_file() -> Path:
+    global _LLM_LOG_FILE
+    if _LLM_LOG_FILE is not None:
+        return _LLM_LOG_FILE
+
+    now = datetime.now()
+    log_dir = LOG_DIR.path / "llm_api_calls" / now.strftime("%Y%m%d")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"{now.strftime('%H%M%S')}-{os.getpid()}.jsonl"
+    _LLM_LOG_FILE = log_dir / filename
+    _LLM_LOG_FILE.touch(exist_ok=True)
+    return _LLM_LOG_FILE
+
+
+def emit_llm_log(*, streaming: bool, request: str, response: str) -> None:
+    log_path = _ensure_llm_log_file()
+    try:
+        with log_path.open("a", encoding="utf-8") as file:
+            file.write(
+                json.dumps(
+                    {"streaming": streaming, "request": request, "response": response},
+                    ensure_ascii=False,
+                )
+            )
+            file.write("\n")
+            file.flush()
+    except OSError:
+        logger.warning("Failed to write LLM log to %s", log_path)
 
 
 def register_adapter(
@@ -123,6 +159,7 @@ class OpenAIAdapter(APIAdapter):
         self,
         *,
         model_name: str,
+        openrouter_pin_provider: str | None,
         messages: list[LLMMessage],
         temperature: float,
         tools: list[AvailableTool] | None,
@@ -141,6 +178,12 @@ class OpenAIAdapter(APIAdapter):
         payload = self.build_payload(
             model_name, converted_messages, temperature, tools, max_tokens, tool_choice
         )
+
+        if openrouter_pin_provider:
+            payload["provider"] = {
+                "order": [openrouter_pin_provider],
+                "allowFallbacks": False,
+            }
 
         if enable_streaming:
             payload["stream"] = True
@@ -259,6 +302,7 @@ class GenericBackend:
 
         endpoint, headers, body = adapter.prepare_request(
             model_name=model.name,
+            openrouter_pin_provider=model.openrouter_pin_provider,
             messages=messages,
             temperature=temperature,
             tools=tools,
@@ -324,6 +368,7 @@ class GenericBackend:
 
         endpoint, headers, body = adapter.prepare_request(
             model_name=model.name,
+            openrouter_pin_provider=model.openrouter_pin_provider,
             messages=messages,
             temperature=temperature,
             tools=tools,
@@ -376,11 +421,16 @@ class GenericBackend:
         self, url: str, data: bytes, headers: dict[str, str]
     ) -> HTTPResponse:
         client = self._get_client()
+        logger.info("LLM request url=%s body=%s", url, data.decode("utf-8", "replace"))
         response = await client.post(url, content=data, headers=headers)
         response.raise_for_status()
 
         response_headers = dict(response.headers.items())
         response_body = response.json()
+        logger.info("LLM response url=%s body=%s", url, response_body)
+        emit_llm_log(
+            streaming=False, request=data.decode("utf-8", "replace"), response=json.dumps(response_body)
+        )
         return self.HTTPResponse(response_body, response_headers)
 
     @async_generator_retry(tries=3)
@@ -388,6 +438,10 @@ class GenericBackend:
         self, url: str, data: bytes, headers: dict[str, str]
     ) -> AsyncGenerator[dict[str, Any]]:
         client = self._get_client()
+        logger.info(
+            "LLM request (stream) url=%s body=%s", url, data.decode("utf-8", "replace")
+        )
+        stream_chunks: list[str] = []
         async with client.stream(
             method="POST", url=url, content=data, headers=headers
         ) as response:
@@ -410,8 +464,16 @@ class GenericBackend:
                     # This might be the case with openrouter, so we just ignore it
                     continue
                 if value == "[DONE]":
-                    return
-                yield json.loads(value.strip())
+                    break
+                stream_chunks.append(value)
+                payload = json.loads(value.strip())
+                logger.info("LLM response (stream) url=%s body=%s", url, payload)
+                yield payload
+        emit_llm_log(
+            streaming=True,
+            request=data.decode("utf-8", "replace"),
+            response="\n".join(stream_chunks),
+        )
 
     async def count_tokens(
         self,

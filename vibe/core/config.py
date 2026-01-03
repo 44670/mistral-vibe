@@ -92,7 +92,7 @@ class TomlFileSettingsSource(PydanticBaseSettingsSource):
 
 
 class ProjectContextConfig(BaseSettings):
-    max_chars: int = 40_000
+    max_chars: int = 80_000
     default_commit_count: int = 5
     max_doc_bytes: int = 32 * 1024
     truncation_buffer: int = 1_000
@@ -223,6 +223,7 @@ class ModelConfig(BaseModel):
     temperature: float = 0.2
     input_price: float = 0.0  # Price per million input tokens
     output_price: float = 0.0  # Price per million output tokens
+    openrouter_pin_provider: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -235,45 +236,30 @@ class ModelConfig(BaseModel):
 
 DEFAULT_PROVIDERS = [
     ProviderConfig(
-        name="mistral",
-        api_base="https://api.mistral.ai/v1",
-        api_key_env_var="MISTRAL_API_KEY",
-        backend=Backend.MISTRAL,
-    ),
-    ProviderConfig(
-        name="llamacpp",
-        api_base="http://127.0.0.1:8080/v1",
-        api_key_env_var="",  # NOTE: if you wish to use --api-key in llama-server, change this value
+        name="openrouter",
+        api_base="https://openrouter.ai/api/v1",
+        api_key_env_var="OPENROUTER_API_KEY",
+        api_style="openai",
+        backend=Backend.GENERIC,
+        reasoning_field_name="reasoning",
     ),
 ]
 
 DEFAULT_MODELS = [
     ModelConfig(
-        name="mistral-vibe-cli-latest",
-        provider="mistral",
-        alias="devstral-2",
-        input_price=0.4,
-        output_price=2.0,
-    ),
-    ModelConfig(
-        name="devstral-small-latest",
-        provider="mistral",
-        alias="devstral-small",
-        input_price=0.1,
-        output_price=0.3,
-    ),
-    ModelConfig(
-        name="devstral",
-        provider="llamacpp",
-        alias="local",
-        input_price=0.0,
-        output_price=0.0,
+        name="google/gemini-3-pro-preview",
+        provider="openrouter",
+        alias="gemini-3-pro-preview",
+        temperature=1.0,
+        input_price=2.0,
+        output_price=4.0,
+        openrouter_pin_provider="google-vertex",
     ),
 ]
 
 
 class VibeConfig(BaseSettings):
-    active_model: str = "devstral-2"
+    active_model: str = "gemini-3-pro-preview"
     textual_theme: str = "terminal"
     vim_keybindings: bool = False
     disable_welcome_banner_animation: bool = False

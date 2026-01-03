@@ -17,7 +17,8 @@ from vibe.core.paths.global_paths import GLOBAL_ENV_FILE
 from vibe.setup.onboarding.base import OnboardingScreen
 
 PROVIDER_HELP = {
-    "mistral": ("https://console.mistral.ai/codestral/vibe", "Mistral AI Studio")
+    "mistral": ("https://console.mistral.ai/codestral/vibe", "Mistral AI Studio"),
+    "openrouter": ("https://openrouter.ai/keys", "OpenRouter Keys page"),
 }
 CONFIG_DOCS_URL = (
     "https://github.com/mistralai/mistral-vibe?tab=readme-ov-file#configuration"
@@ -66,12 +67,14 @@ class ApiKeyScreen(OnboardingScreen):
         )
 
     def compose(self) -> ComposeResult:
-        provider_name = self.provider.name.capitalize()
+        provider_name = (
+            "OpenRouter" if self.provider.name.lower() == "openrouter" else self.provider.name.capitalize()
+        )
 
         self.input_widget = Input(
             password=True,
             id="key",
-            placeholder="Paste your API key here",
+            placeholder=f"Paste your {provider_name} API key here",
             validators=[Length(minimum=1, failure_description="No API key provided.")],
         )
 
