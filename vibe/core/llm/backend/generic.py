@@ -479,23 +479,11 @@ class GenericBackend:
         tool_choice: StrToolChoice | AvailableTool | None = None,
         extra_headers: dict[str, str] | None = None,
     ) -> int:
-        probe_messages = list(messages)
-        if not probe_messages or probe_messages[-1].role != Role.user:
-            probe_messages.append(LLMMessage(role=Role.user, content=""))
-
-        result = await self.complete(
-            model=model,
-            messages=probe_messages,
-            temperature=temperature,
-            tools=tools,
-            max_tokens=16,  # Minimal amount for openrouter with openai models
-            tool_choice=tool_choice,
-            extra_headers=extra_headers,
-        )
-        if result.usage is None:
-            raise ValueError("Missing usage in non streaming completion")
-
-        return result.usage.prompt_tokens
+        totalUTF8Bytes = 0
+        for message in messages:
+            content = message.content or ""
+            totalUTF8Bytes += len(content.encode("utf-8"))
+        return totalUTF8Bytes // 4  # Assuming 4 bytes per token
 
     async def close(self) -> None:
         if self._owns_client and self._client:
